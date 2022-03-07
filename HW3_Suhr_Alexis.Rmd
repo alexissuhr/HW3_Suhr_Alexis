@@ -1,0 +1,364 @@
+---
+title: "STAA 566 - Homework 3 - Mapping"
+author: "Alexis Suhr"
+date: "03 March 2022"
+output: html_document
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+
+---
+
+### Summary for Assignment: 
+
+**Data Source**  
+US Population Data 2015, from package 'usmap'. Additional COVID statistics that did not end up being used, with sources linked below.  
+
+**Spatial Units Being Displayed**  
+The population for each state in 2015.  
+
+**What you are trying to communicate**  
+Originally, I wanted to communicate some statistics related to COVID-19 in the US. However, as I went through the mapping process, it seemed as though the data I had found (and took time to clean/modify) may be showing incorrect values. I wanted to scale the cases and deaths by population to give a more standardized view based on state size. Instead, I took the opportunity to work with multiple mapping features to get a better feel for mapping in R in the future. 
+
+**What decisions you made and why you made those to best communicate the data.**  
+I decided to use the population data for 2015 instead of the COVID dataframe that I had put together. I realized that I wanted to take something of significance from this assignment to use in future mapping project, so I ended up applying a few different coloring schemes from the 'viridis' package to the same map. 
+
+
+### Libraries, Packages:
+
+```{r}
+###### 
+# Install Packages 
+###### 
+
+# This command can check for all libraries/packages that have been loaded or already exist, if needed.
+# May use this in other projects, just going to comment out for now so I have it.
+#(library()$results[,1])
+
+# **ONLY RUN IF CODE BELOW IF NEEDED - TAKES A WHILE**
+# Can copy and paste below into the console if needed
+# to avoid including in the knitting
+
+
+# install.packages(c('ggplot2',
+# 'tidyverse',
+# 'plotly',
+# 'readr',
+# 'rworldmap',
+# 'sf',
+# 'rgeos',
+# 'poliscidata',
+# 'tigris',
+# 'usmap',
+# 'viridis',
+# 'gridExtra'))
+
+
+###### 
+# Read in libraries to be used 
+###### 
+
+libs <- c('ggplot2',
+          'tidyverse',
+          'plotly',
+          'readr',
+          'rworldmap',
+          'sf',
+          'rgeos',
+          'poliscidata',
+          'tigris',
+          'usmap',
+          'viridis',
+          'gridExtra')
+for(l in libs){
+  suppressPackageStartupMessages(library(l,
+                                         quietly = TRUE,
+                                         character.only = TRUE))
+}
+
+rm(l)
+rm(libs)
+```
+
+### Reading in and Cleaning/Modifying Data:  
+
+```{r}
+
+###### 
+# Loading/Reformatting
+#
+# Need to aggregate to a monthly scale for Jan2020-Dec2021
+# Need to re-format state NAMES to state CODES
+###### 
+
+COVID_Data <- na.omit(
+  read.csv("/cloud/project/Datasets/COVID_Data_1Jan2020_to_3Mar2022.txt") %>%
+    mutate(DateRecorded = date,
+           Year = substr(date, 1, 4),
+           Month = substr(date, 6, 7),
+           YearMonth = substr(date, 1, 7),
+           StateAbbreviation = as.factor(state.abb[match(state, state.name)]),
+           NumCases = cases,
+           NumDeaths = deaths) %>%
+    select(StateAbbreviation,
+           DateRecorded,
+           Month,
+           Year,
+           YearMonth,
+           NumCases,
+           NumDeaths)
+)
+
+MaskMandate_Data <- na.omit(
+  read.csv("/cloud/project/Datasets/MaskMandates2.txt") %>%
+    mutate(StateAbbreviation = as.factor(StatePostal),
+           Year = substr(DateEnacted, 1, 4),
+           Month = substr(DateEnacted, 5, 6),
+           YearMonth = paste0(substr(DateEnacted, 1, 4), 
+                              '-', 
+                              substr(DateEnacted, 5, 6)),
+           DateRecorded = paste0(substr(DateEnacted, 1, 4), 
+                                 '-', 
+                                 substr(DateEnacted, 5, 6),
+                                 '-',
+                                 substr(DateEnacted, 7, 8)),
+           FirstOfRecordedMonth = paste0(substr(DateEnacted, 1, 4), 
+                                         '-', 
+                                         substr(DateEnacted, 5, 6),
+                                         '-01')
+    ) %>%
+    select(StateAbbreviation,
+           FirstOfRecordedMonth,
+           Month,
+           Year,
+           YearMonth,
+           Mandate) %>%
+    # removing "DC", "PR", "VI" to match other data frame states
+    filter(StateAbbreviation %in% c("AK", "AL", "AR", "AZ", "CA", "CO", "CT", #"DC, 
+                                    "DE", "FL", "GA", "HI", "IA", "ID", "IL", "IN", 
+                                    "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", 
+                                    "MO", "MS", "MT", "NC", "ND", "NE", "NH", "NJ", 
+                                    "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", 
+                                    "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", 
+                                    "WI", "WV", "WY")
+    )
+  
+)
+
+
+
+
+Population_Data <- na.omit(
+  read.csv("/cloud/project/Datasets/US_PopulationByState.csv") %>%
+    mutate(StateAbbreviation = state.abb[match(NAME, state.name)],
+           Popn2020 = POPESTIMATE2020, 
+           Popn2021 = POPESTIMATE2021) %>%
+    select(StateAbbreviation, 
+           Popn2020,
+           Popn2021)
+)
+
+
+
+###### 
+# Splitting the populations for 2020 and 2021 into two separate data frames ###### 
+# to paste them as rows on top of each other ###### 
+###### 
+
+Popn2020 <- Population_Data %>%
+  select(StateAbbreviation,
+         Popn2020) %>%
+  mutate(Year = '2020')
+
+colnames(Popn2020) <- c("StateAbbreviation",
+                        "Population",
+                        "Year")
+
+Popn2021 <- Population_Data %>%
+  select(StateAbbreviation,
+         Popn2021) %>%
+  mutate(Year = '2021')
+
+colnames(Popn2021) <- c("StateAbbreviation",
+                        "Population",
+                        "Year")
+
+PopulationCombined <- rbind(Popn2020,
+                            Popn2021)
+
+rm(Popn2020)
+rm(Popn2021)
+
+
+testpop <- rbind(PopulationCombined, PopulationCombined, PopulationCombined,
+                 PopulationCombined, PopulationCombined, PopulationCombined,
+                 PopulationCombined, PopulationCombined, PopulationCombined,
+                 PopulationCombined, PopulationCombined, PopulationCombined)
+
+testpop$Month <- rep(seq(1, 12, 1), 100)
+testpop$Month <- ifelse(testpop$Month < 10, paste0('0', testpop$Month), testpop$Month)
+
+testpop$YearMonth <- paste0(testpop$Year, 
+                            '-',
+                            testpop$Month)  
+PopulationFinal <- testpop
+
+
+COVID_Cases_By_Month <- COVID_Data %>%
+  group_by(StateAbbreviation, YearMonth) %>%
+  summarise(TotalMonthlyCases = sum(NumCases),
+            TotalMonthlyDeaths = sum(NumDeaths))
+
+rm(testpop)
+rm(PopulationCombined)
+rm(Population_Data)
+
+
+###### 
+# Getting same dates for each dataset and printing final ones to be used
+###### 
+
+Mandates <- MaskMandate_Data %>%
+  group_by(StateAbbreviation, YearMonth) %>%
+  summarise(TotalMandatesByState = sum(Mandate))
+
+MaskMandate_Data <- Mandates
+
+COVID_Cases_By_Month <- COVID_Cases_By_Month %>%
+  filter(YearMonth > "2020-01",
+         YearMonth < "2021-10")
+
+PopulationFinal <- PopulationFinal %>%
+  filter(YearMonth > "2020-01",
+         YearMonth < "2021-10")
+
+# head(COVID_Cases_By_Month)
+# head(MaskMandate_Data)
+# head(PopulationFinal)
+
+Final_Data <- inner_join(COVID_Cases_By_Month, PopulationFinal)
+
+Final_Data <- inner_join(Final_Data, MaskMandate_Data)
+
+Final_Data <- Final_Data %>%
+  select(-c(Year,
+            Month))
+
+######
+# Adding Variables for Analysis/Mapping:
+#
+# Cases scaled by population
+# Deaths scaled by population
+# Deaths scaled by cases
+###### 
+
+
+Final_Data <- Final_Data %>%
+  mutate(CasesByPopulation = ifelse(TotalMonthlyCases > 0, round(TotalMonthlyCases/Population, 4), 0),
+         DeathsByPopulation = ifelse(TotalMonthlyDeaths > 0, round(TotalMonthlyDeaths/Population, 4), 0),
+         DeathsByCases = ifelse(TotalMonthlyCases > 0, round(TotalMonthlyDeaths/TotalMonthlyCases, 4), 0)
+  )
+Final_Data <- na.omit(Final_Data)
+head(Final_Data)
+```
+
+### Summarizing and Plotting the Data   
+
+```{r fig.align='center', fig.width=8, fig.height=8}
+
+######  Mapping Attempt 1 - using 'usmap' library/data ###### 
+
+grid.arrange(
+
+plot_usmap(data = statepop,
+           values = "pop_2015",
+           color = "black") +
+  scale_fill_viridis(option = "C",
+                     name = "Population (2015)",
+                        label = scales::comma) +
+  theme(legend.position = "right"),
+
+plot_usmap(data = statepop,
+           values = "pop_2015",
+           color = "black") +
+  scale_fill_viridis(option = "D",
+                     name = "Population (2015)",
+                        label = scales::comma) +
+  theme(legend.position = "right"),
+
+plot_usmap(data = statepop,
+           values = "pop_2015",
+           color = "black") +
+  scale_fill_viridis(option = "E",
+                     name = "Population (2015)",
+                        label = scales::comma) +
+  theme(legend.position = "right"),
+plot_usmap(data = statepop,
+           values = "pop_2015",
+           color = "black") +
+  scale_fill_viridis(option = "F",
+                     name = "Population (2015)",
+                        label = scales::comma) +
+  theme(legend.position = "right"),
+nrow = 2)
+```
+
+```{r}
+
+######  Mapping Attempt 2 - using *my* COVID dataframe ###### 
+# 
+# Final_Data$state = Final_Data$StateAbbreviation
+# Mandates$state <- Mandates$StateAbbreviation
+# 
+# 
+# plot_usmap(data = Mandates %>% 
+#              filter(YearMonth == "2021-06"),
+#            values = "TotalMandatesByState") +
+#   labs(title = "Mask Mandates by State in the US",
+#        subtitle = "Aug 2021")+
+#   theme(legend.position = "right")+
+#   scale_fill_viridis(name = "Mandates per State  - Aug 2021")
+# 
+# 
+# plot_usmap(data = Final_Data %>% 
+#              filter(YearMonth == "2021-04"),
+#            values = "CasesByPopulation") +
+#   labs(title = "Total COVID Cases by State in the US",
+#        subtitle = "February 2021")+
+#   theme(legend.position = "right")+
+#   scale_fill_viridis(option = "A",
+#                      name = "Total COVID Cases per Population - Feb 2021")
+# 
+# plot_usmap(data = Final_Data %>% 
+#              filter(YearMonth == "2021-01"),
+#            values = "DeathsByPopulation") +
+#   labs(title = "Total COVID Cases by State in the US",
+#        subtitle = "March 2021")+
+#   theme(legend.position = "right")+
+#   scale_fill_viridis(option = "D",
+#                      name = "Total COVID Deaths per Population - March 2021",
+#                      label = scales::comma)
+# 
+# 
+
+```
+
+
+#### Sources for Data Used  
+
+1. COVID Cases and Deaths by State (2020-2021): 
+https://www.kaggle.com/sudalairajkumar/covid19-in-usa/version/102?select=us_states_covid19_daily.csv
+
+2. COVID Mask Mandates by State (2020-2021):
+https://github.com/COVID19StatePolicy/SocialDistancing/blob/master/data/USstatesCov19distancingpolicy.csv  
+
+3. Population by State (2020-2021):  
+https://www2.census.gov/programs-surveys/popest/datasets/
+
+
+
+
+
+
